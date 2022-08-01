@@ -2,6 +2,7 @@ const User = require('../models/User');
 const { StatusCodes } = require('http-status-codes');
 const CustomError = require('../errors');
 const { attachCookiesToResponse, createTokenUser } = require('../utils');
+const crypto = require("crypto")
 
 const register = async (req, res) => {
   const { email, name, password } = req.body;
@@ -15,11 +16,38 @@ const register = async (req, res) => {
   const isFirstAccount = (await User.countDocuments({})) === 0;
   const role = isFirstAccount ? 'admin' : 'user';
 
-  const user = await User.create({ name, email, password, role });
-  const tokenUser = createTokenUser(user);
-  attachCookiesToResponse({ res, user: tokenUser });
-  res.status(StatusCodes.CREATED).json({ user: tokenUser });
+  const verificationToken = crypto.randomBytes(40).toString('hex');
+
+  const user = await User.create({ name, email, password, role, verificationToken });
+  
+  // send verification token onlt while testing in postman
+  res.status(StatusCodes.CREATED).json({ user: "Success! Plase verify the email to verify account", verificationToken: user.verificationToken, });
+
 };
+
+const verifyEmail = async(req, res)=>{
+  const {email, verificationToken} = req.body;
+
+  const user = await User.findOne({email});
+
+  if(!user){
+    throw new CustomError.UnauthenticatedError('Verification Failed');
+  }
+
+  if (user.verificationToken !== verificationToken){
+    throw new CustomError.UnauthenticatedError('Verification Failed');
+  }
+  user.isVerified = true;
+  user.verified = Date.now();
+  user.verificationToken = '';
+
+  await user.save();
+
+  res.status(StatusCodes.OK).json({msg:"Email verified"});
+
+
+};
+
 const login = async (req, res) => {
   const { email, password } = req.body;
 
@@ -34,6 +62,10 @@ const login = async (req, res) => {
   const isPasswordCorrect = await user.comparePassword(password);
   if (!isPasswordCorrect) {
     throw new CustomError.UnauthenticatedError('Invalid Credentials');
+  }
+
+  if (!user.isVerified){
+    throw new CustomError.UnauthenticatedError('Please verify your email');
   }
   const tokenUser = createTokenUser(user);
   attachCookiesToResponse({ res, user: tokenUser });
@@ -52,4 +84,5 @@ module.exports = {
   register,
   login,
   logout,
+  verifyEmail,
 };
